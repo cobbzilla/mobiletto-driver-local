@@ -1664,10 +1664,10 @@ make-dir@^2.0.0, make-dir@^2.1.0:
     pify "^4.0.1"
     semver "^5.6.0"
 
-mobiletto-common@^1.0.1:
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/mobiletto-common/-/mobiletto-common-1.0.1.tgz#4741b669e2a6f83d9b9f968f6cd4c145fcd7be35"
-  integrity sha512-UffA0CXFSD6FgMpn81VGifDKPKZ7/7KixUb4yBH/7O7fYKxNPlleGbQtECPoAOfkMrJbGWyfAnk0CpaIm6EZ8w==
+mobiletto-common@^1.0.2:
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/mobiletto-common/-/mobiletto-common-1.0.2.tgz#8a7381df2aaf068e572d11d6a236aaf087eb5620"
+  integrity sha512-eJlypNzAU0bmXK7hEfckvCU7gmGH7RilM6JgSOZr1EuDSQzDp/tET/h1CLWSGbUZgPKx+XKESCqAV6abMZU9JA==
   dependencies:
     winston "^3.9.0"
 
