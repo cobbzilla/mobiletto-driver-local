@@ -1,6 +1,6 @@
 {
   "name": "mobiletto-driver-indexeddb",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The IndexedDB driver for mobiletto. This package is intended to be used with mobiletto-base, which does not include any drivers",
   "main": "index.js",
   "keywords": [
