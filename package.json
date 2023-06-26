@@ -1,10 +1,11 @@
 {
-  "name": "mobiletto-driver-local",
-  "version": "1.0.3",
-  "description": "The local filesystem driver for mobiletto. This package is intended to be used with mobiletto-base, which does not include any drivers",
+  "name": "mobiletto-driver-indexeddb",
+  "version": "1.0.0",
+  "description": "The IndexedDB driver for mobiletto. This package is intended to be used with mobiletto-base, which does not include any drivers",
   "main": "index.js",
   "keywords": [
     "storage",
+    "indexeddb",
     "s3",
     "b2",
     "simple",
@@ -22,12 +23,23 @@
     "url": "https://github.com/cobbzilla/mobiletto"
   },
   "license": "Apache-2.0",
+  "scripts": {
+    "test": "mocha --timeout 60000 --exit ./test/*.spec.js"
+  },
   "devDependencies": {
     "@babel/core": "^7.22.5",
     "@babel/node": "^7.22.5",
-    "@babel/preset-env": "^7.22.5"
+    "@babel/preset-env": "^7.22.5",
+    "chai": "^4.3.7",
+    "dotenv": "^16.3.1",
+    "fake-indexeddb": "^4.0.1",
+    "mobiletto-base": "^1.0.13",
+    "mobiletto-driver-local": "^1.0.3",
+    "mocha": "^10.2.0",
+    "randomstring": "^1.3.0"
   },
   "dependencies": {
+    "buffer": "^6.0.3",
     "mobiletto-common": "^1.0.2"
   }
 }

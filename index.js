@@ -1,311 +1,364 @@
-const { dirname, basename } = require('path')
+const { Buffer } = require('buffer')
 
 const {
     M_FILE, M_DIR, M_LINK, M_SPECIAL, isAsyncGenerator, isReadable, logger,
     MobilettoError, MobilettoNotFoundError, readStream, writeStream, closeStream
 } = require('mobiletto-common')
 
-const fs = require('fs')
+REQUIRE = require
+IDB_SCHEMA_VERSION = 1
 
-const DEFAULT_FILE_MODE = '0600'
-const DEFAULT_DIR_MODE = '0700'
-
-const isNotExistError = (err) => err.code && (err.code === 'ENOENT' || err.code === 'ENOTDIR')
-
-const fileType = (stat) => {
-    if (stat.isDirectory()) {
-        return M_DIR
-    }
-    if (stat.isFile()) {
-        return M_FILE
-    }
-    if (stat.isSymbolicLink()) {
-        return M_LINK
-    }
-    return M_SPECIAL
-}
+const ROOT_STORE = 'rootStore'
 
 class StorageClient {
-    baseDir
-    fileMode
-    dirMode
-    constructor(baseDir, opts) {
-        if (!baseDir) {
-            throw new MobilettoError('local.StorageClient: key (baseDir) is required')
+    indexedDB
+    dbPromise
+    db = null
+    rootStore = null
+    constructor(dbName, opts) {
+        if (!dbName) {
+            throw new MobilettoError('indexeddb.StorageClient: key (dbName) is required')
         }
-        const resolved = this.resolveSymlinks(baseDir)
-        if (!resolved.stat.isDirectory()) {
-            const dest = resolved.path === baseDir ? null : resolved.path
-            throw new MobilettoError(`local.StorageClient: not a directory: ${baseDir}${dest ? ` (resolved to ${dest})` : ''}`)
+        if (opts && opts.indexedDB) {
+            this.indexedDB = opts.indexedDB
+        } else {
+            throw new MobilettoError('indexeddb.StorageClient: opts.indexedDB is required')
         }
-        const dir = resolved.path
-        this.baseDir = dir.endsWith('/') ? dir : dir + '/'
-        this.fileMode = opts && opts.fileMode ? opts.fileMode : DEFAULT_FILE_MODE
-        this.dirMode = opts && opts.dirMode ? opts.dirMode : DEFAULT_DIR_MODE
-    }
-    resolveSymlinks (path) {
-        let stat = fs.lstatSync(path)
-        let symlinksFollowed = false
-        while (!stat.isDirectory() && stat.isSymbolicLink()) {
-            path = fs.readlinkSync(path)
-            if (path.startsWith('private/')) {
-                path = '/' + path
+        this.dbPromise = new Promise((resolve, reject) => {
+            const openOrCreateDB = this.indexedDB.open(dbName, IDB_SCHEMA_VERSION)
+            openOrCreateDB.onerror = (event) => {
+                reject(`indexedDB.open failed: ${event.target.errorCode}`)
             }
-            stat = fs.lstatSync(path)
-            symlinksFollowed = true
-        }
-        return { path, stat }
+            openOrCreateDB.onsuccess = () => {
+                resolve(this.db = openOrCreateDB.result)
+            }
+
+            openOrCreateDB.onupgradeneeded = (event) => {
+                if (this.db != null && this.db !== event.target.result) {
+                    reject(new MobilettoError(`indexedDB.upgradeneeded: event.target.result !== this.db`))
+                    return
+                }
+                const db = event.target.result
+                db.onerror = (event) => {
+                    reject(new MobilettoError(`indexedDB.open failed (upgradeneeded): ${event.target.result}`))
+                }
+
+                this.rootStore = db.createObjectStore(ROOT_STORE, {})
+            }
+        })
     }
+
     testConfig = async () => await this.list()
 
-    normalizePath = (path) => path.startsWith(this.baseDir)
-        ? path
-        : this.baseDir + (path.startsWith('/') ? path.substring(1) : path)
-    denormalizePath = (path) => {
-        const norm = path.startsWith(this.baseDir) ? path.substring(this.baseDir.length) : path
-        return norm.startsWith('/') ? norm.substring(1) : norm
-    }
-    ioError = (err, path, method) => isNotExistError(err)
-        ? err instanceof MobilettoNotFoundError
-            ? err
-            : new MobilettoNotFoundError(this.denormalizePath(path))
-        : err instanceof MobilettoError || err instanceof MobilettoNotFoundError
-            ? err
-            : new MobilettoError(`${method}(${path}) error: ${err}`, err)
-
-
-    fileToObject = (dir) => (f) => {
-        const normPath = (dir.endsWith('/') ? dir : dir + '/') + f;
-        const stat = fs.lstatSync(normPath)
-        const type = fileType(stat)
-        const entry = {
-            name: this.denormalizePath(normPath),
-            type
-        }
-        if (type === M_LINK) {
-            const resolved = this.resolveSymlinks(normPath)
-            entry.link = resolved.path
-        }
-        return entry
-    }
-
-    readDirFiles = async (dir, recursive, visitor) => {
-        if (!recursive) {
-            return await this.dirFiles(dir, visitor)
-        }
-        const files = await this.dirFiles(dir, visitor)
-        for (const file of files) {
-            if (file.type === M_DIR) {
-                await this.readDirFiles(file.name, true, visitor)
-            }
-        }
-    }
-
-    dirFiles = async (dir, visitor) => {
-        const norm = this.normalizePath(dir);
-        try {
-            const names = fs.readdirSync(norm);
-            const files = names.map(this.fileToObject(norm))
-            for (const f of files) {
-                await visitor(f)
-            }
-            return files
-        } catch (e) {
-            if (isNotExistError(e)) {
-                // try to list the parent directory and filter for just this file
-                const files = []
-                try {
-                    const parent = dirname(norm)
-                    const base = basename(norm)
-                    const names = fs.readdirSync(parent)
-                    for (const n of names) {
-                        if (n === base) {
-                            const f = this.fileToObject(parent)(base)
-                            files.push(f)
-                            await visitor(f)
-                        }
-                    }
-                } catch (e2) {
-                    logger.warn(`dirFiles (try-file) error: ${JSON.stringify(e2)}`)
-                    throw this.ioError(e2, norm, 'dirFiles')
-                }
-                if (files.length > 0) {
-                    return files
-                } else {
-                    logger.warn(`dirFiles (try-file) not found: ${norm}`)
-                    throw this.ioError(e, norm, 'dirFiles')
-                }
-            }
-            logger.warn(`dirFiles error: ${JSON.stringify(e)}`)
-            throw this.ioError(e, norm, 'dirFiles')
-        }
+    mdb = async () => {
+        if (this.db) return this.db
+        const db = await this.dbPromise
+        if (db) return db
+        if (this.db) return this.db
+        throw new MobilettoError(`mdb: error getting database`)
     }
 
     async list (pth = '', recursive = false, visitor = null) {
-        const dir = this.normalizePath(pth)
-        try {
-            if (visitor === null) {
-                const results = []
-                await this.readDirFiles(dir, recursive, (obj) => results.push(obj))
-                return results
-            } else {
-                return await this.readDirFiles(dir, recursive, visitor)
-            }
-        } catch (err) {
-            if (err instanceof MobilettoNotFoundError && !recursive && pth.includes('/')) {
-                // are we trying to list a single file?
-                const parentDir = this.normalizePath(dirname(pth))
-                const results = []
-                await this.readDirFiles(parentDir, false, (obj) => {
-                    if (obj.name === pth) {
-                        results.push(obj)
+        return this._list(pth, recursive, visitor)
+    }
+
+    async _list (pth = '', recursive = false, visitor = null) {
+        const db = await this.mdb()
+        return new Promise(async (resolve, reject) => {
+            try {
+                const listTx = db.transaction(ROOT_STORE, "readonly")
+                listTx.oncomplete = (event) => {
+                    logger.info(`list(${pth}) listTx completed`)
+                }
+                listTx.onerror = (event) => {
+                    logger.error(`list(${pth}) listTx error`)
+                }
+
+                const listRequest = listTx.objectStore(ROOT_STORE).getAll()
+                listRequest.onerror = (event) => {
+                    reject(event)
+                }
+                listRequest.onsuccess = async (event) => {
+                    let foundExact = null
+                    const filtered = listRequest.result
+                        .sort((o1, o2) => o1.name.localeCompare(o2.name))
+                        .map(o => {
+                            const prefixMatch = o.name.startsWith(pth)
+                            if (o.name === pth) {
+                                foundExact = o
+                                return o
+                            }
+                            if (prefixMatch) {
+                                if (recursive) return o
+                                const normMatch = pth === '' ? '' : pth.endsWith('/') ? pth : pth + '/'
+                                if (o.name.startsWith(normMatch) && o.name.length > normMatch.length) {
+                                    const nextSlash = o.name.indexOf('/', normMatch.length + 1)
+                                    if (nextSlash === -1) return o
+                                    const dir = {
+                                        type: M_DIR,
+                                        name: o.name.substring(0, nextSlash)
+                                    }
+                                    return dir
+                                }
+                            }
+                            return null
+                        })
+                        .filter(o => o != null)
+                        .filter((value, index, self) =>
+                            value != null && index === self.findIndex(t => t.name === value.name)
+                        )
+                    if (foundExact && !recursive) {
+                        if (visitor) await visitor(foundExact)
+                        resolve([foundExact])
+                    } else {
+                        if (visitor) {
+                            for (const f of filtered.filter(o => o.type === M_FILE)) {
+                                await visitor(f)
+                            }
+                        }
+                        resolve(filtered)
                     }
-                })
-                if (results.length === 0) {
-                    throw err
                 }
-                return results
+            } catch (e) {
+                logger.error(`list(${pth}): error ${e}`)
             }
-            throw this.ioError(err, pth, 'list')
-        }
+        })
     }
+
     async metadata (path) {
-        const file = this.normalizePath(path)
-        try {
-            const lstat = fs.lstatSync(file)
-            if (!lstat) {
-                throw new MobilettoError('metadata: lstat error')
-            }
-            const type = fileType(lstat)
-            if (type === M_DIR && path !== '') {
-                const contents = await this.list(path)
-                if (contents.length === 0) {
-                    throw new MobilettoNotFoundError(path)
+        const db = await this.mdb()
+        let data = null
+        return new Promise((resolve, reject) => {
+            const readMetaTx = db.transaction(ROOT_STORE, "readonly")
+            readMetaTx.oncomplete = (event) => {
+                if (!data) {
+                    reject(new MobilettoNotFoundError(path))
+                    return
+                }
+                try {
+                    delete data.bytes
+                    resolve(data)
+                } catch (e) {
+                    reject(new MobilettoError(`metadata(${path}) error parsing data: ${e}`))
                 }
             }
-            return {
-                name: this.denormalizePath(file),
-                type,
-                size: lstat.size,
-                mtime: lstat.mtimeMs
+            readMetaTx.onerror = (event) => {
+                reject(new MobilettoError(`metadata(${path}) readMetaTx error`))
             }
-        } catch (err) {
-            throw this.ioError(err, path, 'metadata')
-        }
-    }
-
-    mkdirs (path) {
-        try {
-            logger.debug(`mkdirs: creating directory: ${path}`)
-            fs.mkdirSync(path, {recursive: true, mode: this.dirMode})
-        } catch (err) {
-            throw new MobilettoError(`mkdirs: error creating directory ${path}: ${err}`, err)
-        }
-    }
-
-    async normalizePathAndEnsureParentDirs (path) {
-        const file = this.normalizePath(path)
-
-        logger.debug(`read: reading path: ${path} - ${file}`)
-        const parent = dirname(file)
-        let dirStat
-        try {
-            dirStat = fs.lstatSync(parent)
-        } catch (err) {
-            if (isNotExistError(err)) {
-                this.mkdirs(parent)
-            } else {
-                throw new MobilettoError(`write: lstat error on ${parent}: ${err}`, err)
+            const readRequest = readMetaTx.objectStore(ROOT_STORE).get(path)
+            readRequest.onerror = (event) => {
+                reject(new MobilettoError(`metadata(${path}) readRequest error`))
             }
-        }
-        if (typeof dirStat === 'undefined') {
-            this.mkdirs(parent)
-        } else if (!dirStat.isDirectory()) {
-            throw new MobilettoError(`write: not a directory: ${parent} (cannot write file ${file})`)
-        }
-        return file
+            readRequest.onsuccess = (event) => {
+                data = readRequest.result
+            }
+        })
     }
 
     async write (path, generatorOrReadableStream) {
-        const file = await this.normalizePathAndEnsureParentDirs(path)
-        logger.debug(`write: writing path ${path} -> ${file}`)
-        const stream = fs.createWriteStream(file, {mode: this.fileMode})
-        const writer = writeStream(stream)
-        const closer = closeStream(stream)
-        let count = 0
-
-        if (isReadable(generatorOrReadableStream)) {
-            const readable = generatorOrReadableStream
-            const streamHandler = stream =>
-                new Promise((resolve, reject) => {
-                    stream.on('data', (data) => {
-                        if (data) {
-                            writer(data)
-                            count += data.length
-                        }
+        let bytes = []
+        const db = await this.mdb()
+        return new Promise(async (resolve, reject) => {
+            if (isReadable(generatorOrReadableStream)) {
+                const readable = generatorOrReadableStream
+                const streamHandler = stream =>
+                    new Promise((resolve2, reject2) => {
+                        stream.on('data', (data) => {
+                            if (data) {
+                                bytes.push(...data)
+                            }
+                        })
+                        stream.on('error', (e) => {
+                            reject2(e)
+                        })
+                        stream.on('end', () => {
+                            resolve2()
+                        })
                     })
-                    stream.on('error', reject)
-                    stream.on('end', () => {
-                        closer()
-                        resolve()
-                    })
-                })
-            await streamHandler(readable)
-            return count
-        }
-
-        const generator = generatorOrReadableStream
-        let chunk = isAsyncGenerator(generator)
-            ? (await generator.next()).value
-            : generator.next().value
-        let nullCount = 0
-        while (chunk || nullCount < 5) {
-            if (chunk) {
-                count += chunk.length
-                writer(chunk)
+                await streamHandler(readable)
             } else {
-                nullCount++
+                const generator = generatorOrReadableStream
+                let chunk = isAsyncGenerator(generator)
+                    ? (await generator.next()).value
+                    : generator.next().value
+                let nullCount = 0
+                while (chunk || nullCount < 5) {
+                    if (chunk) {
+                        bytes.push(...chunk)
+                    } else {
+                        nullCount++
+                    }
+                    chunk = isAsyncGenerator(generator)
+                        ? (await generator.next()).value
+                        : generator.next().value
+                }
             }
-            chunk = isAsyncGenerator(generator)
-                ? (await generator.next()).value
-                : generator.next().value
-        }
-        closer()
-        return count
+
+            const writeTx = db.transaction(ROOT_STORE, "readwrite")
+            writeTx.oncomplete = (event) => {
+                logger.info(`write(${path}) writeTx complete`)
+                resolve(bytes.length)
+            }
+            writeTx.onerror = (event) => {
+                reject(new MobilettoError(`write(${path}) writeTx error`))
+            }
+
+            const writeObject = {
+                name: path,
+                type: M_FILE,
+                bytes,
+                size: bytes.length,
+                mtime: Date.now()
+            }
+            const writeRequest = writeTx.objectStore(ROOT_STORE).put(writeObject, path)
+            writeRequest.onerror = (event) => {
+                reject(new MobilettoError(`write(${path}) writeRequest error`))
+            }
+            writeRequest.onsuccess = (event) => {
+                logger.info(`write(${path}) writeRequest success`)
+                resolve(bytes.length)
+            }
+        })
     }
 
     async read (path, callback, endCallback = null) {
-        const file = this.normalizePath(path)
-        logger.debug(`read: reading path: ${path} - ${file}`)
-        try {
-            const stream = fs.createReadStream(file)
-            return await readStream(stream, callback, endCallback)
-        } catch (err) {
-            throw this.ioError(err, path, 'read')
-        }
+        const db = await this.mdb()
+        let bytesRead = null
+        return new Promise((resolve, reject) => {
+            const readTx = db.transaction(ROOT_STORE, 'readonly')
+            let notFound = null
+            readTx.oncomplete = (event) => {
+                if (bytesRead) {
+                    resolve(bytesRead)
+                } else if (notFound) {
+                    reject(notFound)
+                } else {
+                    logger.warn(`read(${path}) readTx complete but neither bytesRead nor notFound was set`)
+                }
+            }
+            readTx.onerror = (event) => {
+                reject(new MobilettoError(`read(${path}) readTx error`))
+            }
+
+            const readRequest = readTx.objectStore(ROOT_STORE).get(path)
+            readRequest.onerror = (event) => {
+                reject(new MobilettoError(`read(${path}) readRequest error`))
+            }
+            readRequest.onsuccess = (event) => {
+                if (typeof (readRequest.result) === 'undefined') {
+                    notFound = new MobilettoNotFoundError(path)
+                    return
+                }
+                if (readRequest.result && readRequest.result.bytes && readRequest.result.bytes.length > 0) {
+                    let bytes
+                    if (typeof (readRequest.result.bytes[0]) === 'string') {
+                        bytes = Buffer.from(readRequest.result.bytes.join(''))
+                    } else {
+                        bytes = Buffer.from(readRequest.result.bytes)
+                    }
+                    callback(bytes)
+                    if (endCallback) endCallback()
+                    bytesRead = bytes.length
+                }
+            }
+        })
     }
 
     async remove (path, recursive, quiet) {
-        const file = this.normalizePath(path)
-        logger.debug(`remove: deleting path: ${path} = ${file}`)
-        try {
-            fs.rmSync(file, {recursive: recursive, force: quiet, maxRetries: 2})
-        } catch (err) {
-            if (isNotExistError(err)) {
-                if (!quiet) {
-                    throw new MobilettoNotFoundError(path)
+        const db = await this.mdb()
+        const deleteErrors = []
+        const deletedFiles = []
+        const deleteVisitor = async file => await new Promise(async (resolve, reject) => {
+            const path = file.name
+            if (file.type !== M_FILE) {
+                logger.warn(`remove(${path}): not a file`)
+                if (quiet) {
+                    resolve(true)
+                } else {
+                    const err = new MobilettoError(`remove(${path}): not a file`);
+                    deleteErrors.push(err)
+                    reject(err)
                 }
-            } else {
-                throw new MobilettoError(`remove(${path}) error: ${err}`, err)
             }
+            let deleteResult = null
+            const deleteTx = db.transaction(ROOT_STORE, 'readwrite')
+            deleteTx.oncomplete = (event) => {
+                if (deleteResult == null) {
+                    if (quiet) {
+                        logger.warn(`remove(${path}): deleteResult was null`)
+                        resolve(true)
+                    } else {
+                        const err = new MobilettoError(`remove(${path}): deleteResult was null`);
+                        deleteErrors.push(err)
+                        reject(err)
+                    }
+                } else {
+                    if (deleteResult instanceof MobilettoNotFoundError || deleteResult instanceof MobilettoError) {
+                        if (quiet) {
+                            resolve(true)
+                        } else {
+                            deleteErrors.push(deleteResult)
+                            reject(deleteResult)
+                        }
+                    } else {
+                        deletedFiles.push(deleteResult)
+                        resolve(deleteResult)
+                    }
+                }
+            }
+            deleteTx.onerror = (event) => {
+                if (quiet) {
+                    logger.warn(`remove(${path}): deleteTx error`)
+                    resolve(true)
+                } else {
+                    const err = new MobilettoError(`remove(${path}) deleteTx error`);
+                    deleteErrors.push(err)
+                    reject(err)
+                }
+            }
+
+            const findRequest = deleteTx.objectStore(ROOT_STORE).get(path)
+            findRequest.onerror = (event) => {
+                logger.warn(`remove(${path}): error`)
+                deleteResult = new MobilettoNotFoundError(path)
+            }
+            findRequest.onsuccess = (event) => {
+                if (typeof (findRequest.result) === 'undefined') {
+                    deleteResult = new MobilettoNotFoundError(path)
+                } else {
+                    const deleteRequest = deleteTx.objectStore(ROOT_STORE).delete(path)
+                    deleteRequest.onsuccess = (event) => {
+                        deleteResult = path
+                    }
+                    deleteRequest.onerror = (event) => {
+                        deleteResult = new MobilettoError(`remove(${path}) deleteRequest error`)
+                    }
+                }
+            }
+        })
+
+        const toDelete = await this._list(path, recursive, deleteVisitor)
+        if (toDelete.length === 0) {
+            if (quiet) return true
+            throw new MobilettoNotFoundError(path)
         }
-        return path
+
+        if (deleteErrors.length === 0) {
+            return deletedFiles.length === 0
+                ? quiet
+                : deletedFiles.length === 1 ? deletedFiles[0] : deletedFiles
+        } else {
+            throw deleteErrors[0]
+        }
     }
 }
 
 function storageClient (key, secret, opts) {
     if (!key) {
-        throw new MobilettoError('local.storageClient: key is required')
+        throw new MobilettoError('indexeddb.storageClient: key is required')
+    }
+    if (!opts || !opts.indexedDB) {
+        throw new MobilettoError('indexeddb.storageClient: opts.indexedDB is required')
     }
     return new StorageClient(key, opts)
 }
