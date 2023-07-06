@@ -1,19 +1,23 @@
 // To run the tests, you need a .env file one level above this directory
-require('dotenv').config()
+import 'dotenv/config'
 
-const fs = require('fs')
-const { basename, dirname } = require('path')
-const randomstring = require('randomstring')
-const crypto = require('crypto')
+import fs from 'fs'
+import { basename, dirname } from 'path'
+import * as randomstring from 'randomstring'
+import * as crypto from 'crypto'
 
-const { M_DIR, M_FILE, MobilettoNotFoundError, logger } = require('mobiletto-common')
+import { expect, should, assert } from 'chai'
 
-const { connect, mobiletto, redis, closeRedis, registerDriver} = require('mobiletto-base')
+import { indexedDB } from'fake-indexeddb'
 
-registerDriver('indexedDB', require('../index'))
-registerDriver('local', require('mobiletto-driver-local'))
+import { M_DIR, M_FILE, MobilettoNotFoundError, logger } from 'mobiletto-common'
 
-const { expect, should, assert } = require('chai')
+import {connect, mobiletto, closeRedis, registerDriver, flushAll} from 'mobiletto-base'
+
+import { storageClient as idbDriver } from '../lib/esm/index.js'
+import { storageClient as localDriver } from 'mobiletto-driver-local'
+registerDriver('indexedDB', idbDriver)
+registerDriver('local', localDriver)
 
 // chunk size used by generator function, used by driver's 'write' function
 // the temp file is also TEMP_SZ_MULTIPLE of this number
@@ -22,9 +26,7 @@ const TEMP_SZ_MULTIPLE = 3 // temp file will be ~24k (READ_SZ * 3)
 
 const SINGLE_DRIVER = 'indexedDB'
 
-const { indexedDB } = require('fake-indexeddb')
-
-DRIVER_CONFIG = {
+const DRIVER_CONFIG = {
     indexedDB: {
         key: 'test_db',
         opts: { indexedDB }
@@ -33,7 +35,7 @@ DRIVER_CONFIG = {
         key: '/tmp'
     }
 }
-DRIVER_NAMES = Object.keys(DRIVER_CONFIG)
+const DRIVER_NAMES = Object.keys(DRIVER_CONFIG)
 
 async function assertMeta (api, name, expectedSize) {
     try {
@@ -122,7 +124,7 @@ for (const redisSetup of redisTests()) {
         const tempFilename = (name, i) => name + (i > 0 ? '_' + i : '')
         describe(`${driverTest} test`, () => {
             beforeEach ((done) => {
-                redis.flushAll().then(
+                flushAll().then(
                     () => { logger.info(`${driverTest} - flushed redis`) },
                     (e) => {
                         logger.error(`${driverTest} - error flushing redis: ${e}`)
