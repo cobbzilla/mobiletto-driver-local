@@ -32,7 +32,7 @@ export class StorageClient {
   dbPromise: Promise<IDBDatabase>;
   db: IDBDatabase | null = null;
   rootStore: IDBObjectStore | null = null;
-  constructor(dbName: string, opts: { indexedDB: typeof indexedDB }) {
+  constructor(dbName: string, opts: { indexedDB: IDBFactory }) {
     if (!dbName) {
       throw new MobilettoError("indexeddb.StorageClient: key (dbName) is required");
     }
@@ -43,22 +43,25 @@ export class StorageClient {
     }
     this.dbPromise = new Promise((resolve, reject) => {
       const openOrCreateDB = this.indexedDB.open(dbName, IDB_SCHEMA_VERSION);
+      let db: IDBDatabase;
       openOrCreateDB.onerror = () => {
         reject("indexedDB.open failed");
       };
-      openOrCreateDB.onsuccess = () => {
-        resolve((this.db = openOrCreateDB.result));
-      };
-
-      openOrCreateDB.onupgradeneeded = () => {
-        if (!this.db) {
-          reject(new MobilettoError("indexedDB.upgradeneeded: this.db was never initialized"));
+      openOrCreateDB.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+        const req = event.target as IDBRequest;
+        if (!req.result) {
+          reject(new MobilettoError("indexedDB.upgradeneeded: event.target.result was not found"));
           return;
         }
-        this.db.onerror = () => {
+        db = req.result;
+        db.onerror = () => {
           reject(new MobilettoError("indexedDB.open failed (upgradeneeded)"));
         };
-        this.rootStore = this.db.createObjectStore(ROOT_STORE, {});
+        this.rootStore = db.createObjectStore(ROOT_STORE, {});
+      };
+      openOrCreateDB.onsuccess = () => {
+        if (db) resolve(db);
+        reject("indexedDB.open failed: db was not initialized");
       };
     });
   }

@@ -7,7 +7,7 @@ export declare class StorageClient {
     db: IDBDatabase | null;
     rootStore: IDBObjectStore | null;
     constructor(dbName: string, opts: {
-        indexedDB: typeof indexedDB;
+        indexedDB: IDBFactory;
     });
     testConfig: () => Promise<MobilettoMetadata[]>;
     mdb: () => Promise<IDBDatabase>;
