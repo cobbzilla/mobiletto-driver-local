@@ -70,7 +70,7 @@ class StorageClient {
                 dir = baseDir;
             } else {
                 throw new MobilettoError(
-                    `local.StorageClient: baseDir does not exist (and opts.createIfNotExists was not true): ${baseDir}`
+                    `local.StorageClient: baseDir does not exist (and opts.createIfNotExist was not true): ${baseDir}`
                 );
             }
         } else {
