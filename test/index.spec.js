@@ -9,7 +9,7 @@ import { expect, should, assert } from "chai";
 
 import { M_FILE, M_DIR, MobilettoNotFoundError, logger } from "mobiletto-base";
 
-import { connect, mobiletto, closeRedis, registerDriver, flushAll } from "mobiletto-base";
+import { connect, mobiletto, registerDriver, flushAll, shutdownMobiletto } from "mobiletto-base";
 
 import { storageClient as localDriver } from "../lib/esm/index.js";
 registerDriver("local", localDriver);
@@ -610,5 +610,5 @@ for (const redisSetup of redisTests()) {
 
 after((done) => {
     logger.info("all tests finished, tearing down redis...");
-    closeRedis().finally(done);
+    shutdownMobiletto().finally(done);
 });
