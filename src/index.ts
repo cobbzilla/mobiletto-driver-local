@@ -18,6 +18,7 @@ import {
     MobilettoWriteSource,
     MobilettoOptions,
     MobilettoDriverInfo,
+    MobilettoDriverScope,
 } from "mobiletto-base";
 
 import * as fs from "fs";
@@ -53,7 +54,12 @@ export type FsMetadata = MobilettoMetadata & {
     link?: string;
 };
 
-export const LocalInfo: MobilettoDriverInfo = {
+export type LocalInfoType = {
+    driver: string;
+    scope: MobilettoDriverScope;
+};
+
+export const LocalInfo: LocalInfoType = {
     driver: "local",
     scope: "local",
 };
@@ -106,7 +112,10 @@ class StorageClient {
     }
     testConfig = async () => await this.list();
 
-    info = () => LocalInfo;
+    info = (): MobilettoDriverInfo => ({
+        canonicalName: () => `local:${this.baseDir}`,
+        ...LocalInfo,
+    });
 
     normalizePath = (path: string) =>
         path.startsWith(this.baseDir) ? path : this.baseDir + (path.startsWith("/") ? path.substring(1) : path);

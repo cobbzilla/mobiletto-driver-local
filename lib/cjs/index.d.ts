@@ -1,6 +1,6 @@
 /// <reference types="node" />
 /// <reference types="node" />
-import { MobilettoError, MobilettoNotFoundError, MobilettoMetadata, MobilettoRemoveOptions, MobilettoVisitor, MobilettoWriteSource, MobilettoOptions, MobilettoDriverInfo } from "mobiletto-base";
+import { MobilettoError, MobilettoNotFoundError, MobilettoMetadata, MobilettoRemoveOptions, MobilettoVisitor, MobilettoWriteSource, MobilettoOptions, MobilettoDriverInfo, MobilettoDriverScope } from "mobiletto-base";
 import * as fs from "fs";
 export type LocalDriverOptions = MobilettoOptions & {
     fileMode?: string;
@@ -10,7 +10,11 @@ export type LocalDriverOptions = MobilettoOptions & {
 export type FsMetadata = MobilettoMetadata & {
     link?: string;
 };
-export declare const LocalInfo: MobilettoDriverInfo;
+export type LocalInfoType = {
+    driver: string;
+    scope: MobilettoDriverScope;
+};
+export declare const LocalInfo: LocalInfoType;
 declare class StorageClient {
     baseDir: string;
     fileMode: string;
