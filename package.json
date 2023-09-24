@@ -1,6 +1,6 @@
 {
   "name": "mobiletto-driver-local",
-  "version": "2.0.15",
+  "version": "2.0.16",
   "type": "module",
   "description": "The local filesystem driver for mobiletto. This package is intended to be used with mobiletto-base, which does not include any drivers",
   "keywords": [
@@ -24,13 +24,13 @@
   "license": "Apache-2.0",
   "scripts": {
     "test": "mocha --timeout 10000 ./test/*.spec.js",
-    "tsc": "tsc -p tsconfig.json && tsc -p tsconfig-cjs.json",
+    "tsc": "tsc -p tsconfig.json",
     "lint": "npx eslint src test",
     "lint:fix": "npm run lint -- --fix",
     "prettier": "npx prettier src test --check",
     "prettier:fix": "npm run prettier -- --write"
   },
-  "main": "./lib/cjs/index.js",
+  "main": "./lib/esm/index.js",
   "module": "./lib/esm/index.js",
   "files": [
     "lib/"
